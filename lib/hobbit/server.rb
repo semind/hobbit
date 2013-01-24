@@ -10,7 +10,7 @@ module Hobbit
       host = options[:host] || '127.0.0.1'
       port = options[:port] || 1981
       @server_socket = TCPServer.new(host, port)
-      puts "Start Hobbit Server... #{host}:#{port}"
+      puts_my_pid_with("Start Hobbit Server... #{host}:#{port}")
 
       empty_body = ''
       empty_body.encode!(Encoding::ASCII_8BIT) if empty_body.respond_to?(:encode!)
@@ -38,34 +38,41 @@ module Hobbit
     def run
       # handle request one by one
       loop do
-        env = initialize_run_state
-
         # get request
         client_socket = @server_socket.accept
-
-        parse_request(client_socket)
-        env = normalize_rack_env(env)
-
-        # excute application
-        status, headers, body = @app.call(env)
-
-        # write response header to client
-        response_header = normalize_response_header(status, headers)
-        client_socket.write(response_header)
-
-        # write response body to client
-        body.each do |part|
-          client_socket.write part
+        fork do
+          handle_request(client_socket)
         end
-        body.close if body.respond_to?(:close)
-
-        client_socket.flush
-        client_socket.close
       end
       @server_socket.close
     end
 
-    def initialize_run_state
+    def handle_request(client_socket)
+      puts_my_pid_with("handle rquest")
+
+      env = initialize_state
+
+      parse_request(client_socket)
+      env = normalize_rack_env(env)
+
+      # excute application
+      status, headers, body = @app.call(env)
+
+      # write response header to client
+      response_header = normalize_response_header(status, headers)
+      client_socket.write(response_header)
+
+      # write response body to client
+      body.each do |part|
+        client_socket.write part
+      end
+      body.close if body.respond_to?(:close)
+
+      client_socket.flush
+      client_socket.close
+    end
+
+    def initialize_state
       env = @env.dup
       @parser.reset!
       @parser_state = true
@@ -105,5 +112,10 @@ module Hobbit
       end
       response += "\r\n"
     end
+
+    def puts_my_pid_with(message)
+      puts "PID: #{Process.pid} #{message}"
+    end
+
   end
 end
