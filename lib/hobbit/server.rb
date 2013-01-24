@@ -7,6 +7,9 @@ module Hobbit
     def initialize(app, options = {})
       @app = app # Rack
 
+      # Socket Pair for pass client socket to worker process
+      @fd_send, @fd_recv = UNIXSocket.pair
+
       host = options[:host] || '127.0.0.1'
       port = options[:port] || 1981
       @server_socket = TCPServer.new(host, port)
@@ -40,15 +43,19 @@ module Hobbit
       loop do
         # get request
         client_socket = @server_socket.accept
+        enqueue_client(client_socket)
         fork do
-          handle_request(client_socket)
+          handle_request
         end
       end
       @server_socket.close
     end
 
-    def handle_request(client_socket)
+    # get request and response
+    def handle_request
       puts_my_pid_with("handle rquest")
+
+      client_socket = dequeue_client
 
       env = initialize_state
 
@@ -117,5 +124,14 @@ module Hobbit
       puts "PID: #{Process.pid} #{message}"
     end
 
+    # for enqueue client socket at master process
+    def enqueue_client(client_socket)
+      @fd_send.send_io client_socket
+    end
+
+    # for dequeue client socket at worker process
+    def dequeue_client
+      @fd_recv.recv_io
+    end
   end
 end
