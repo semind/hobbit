@@ -27,6 +27,7 @@ module Hobbit
           Process.kill(:SIGINT, pid)
           Process.waitpid(pid)
         end
+        exit(0)
       end
 
       run
