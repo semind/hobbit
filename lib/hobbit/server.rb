@@ -14,7 +14,11 @@ module Hobbit
 
       @worker_pids = []
 
-      spawn_worker
+      worker_number = options[:worker_number] || 2
+
+      worker_number.times do
+        spawn_worker
+      end
 
       host = options[:host] || '127.0.0.1'
       port = options[:port] || 1981
