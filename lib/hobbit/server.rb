@@ -5,15 +5,11 @@ module Hobbit
   attr_accessor :server_socket
   class Server
     def initialize(app, options = {})
+      ## params need to define before fork worker process
       @app = app # Rack
 
       # Socket Pair for pass client socket to worker process
       @fd_send, @fd_recv = UNIXSocket.pair
-
-      host = options[:host] || '127.0.0.1'
-      port = options[:port] || 1981
-      @server_socket = TCPServer.new(host, port)
-      puts_my_pid_with("Start Hobbit Server... #{host}:#{port}")
 
       empty_body = ''
       empty_body.encode!(Encoding::ASCII_8BIT) if empty_body.respond_to?(:encode!)
@@ -27,12 +23,29 @@ module Hobbit
         'rack.version' => [1, 0]
       }
 
+      @worker_pids = []
+
       @parser = Http::Parser.new
       @parser_state = true # true => while parsing, false => not parsing
 
       # if parsing finished, then change state not parsing
       @parser.on_message_complete = proc do |env|
         @parser_state = false
+      end
+
+      spawn_worker
+
+      host = options[:host] || '127.0.0.1'
+      port = options[:port] || 1981
+      @server_socket = TCPServer.new(host, port)
+      puts_my_pid_with("Start Hobbit Server... #{host}:#{port}")
+
+      trap(:SIGINT) do
+        @worker_pids.each do |pid|
+          puts_my_pid_with("Worker exit...")
+          Process.kill(:SIGINT, pid)
+          Process.waitpid(pid)
+        end
       end
 
       run
@@ -44,39 +57,37 @@ module Hobbit
         # get request
         client_socket = @server_socket.accept
         enqueue_client(client_socket)
-        fork do
-          handle_request
-        end
       end
       @server_socket.close
     end
 
     # get request and response
     def handle_request
-      puts_my_pid_with("handle rquest")
+      loop do
+        client_socket = dequeue_client
+        puts_my_pid_with("handle rquest")
 
-      client_socket = dequeue_client
+        env = initialize_state
 
-      env = initialize_state
+        parse_request(client_socket)
+        env = normalize_rack_env(env)
 
-      parse_request(client_socket)
-      env = normalize_rack_env(env)
+        # excute application
+        status, headers, body = @app.call(env)
 
-      # excute application
-      status, headers, body = @app.call(env)
+        # write response header to client
+        response_header = normalize_response_header(status, headers)
+        client_socket.write(response_header)
 
-      # write response header to client
-      response_header = normalize_response_header(status, headers)
-      client_socket.write(response_header)
+        # write response body to client
+        body.each do |part|
+          client_socket.write part
+        end
+        body.close if body.respond_to?(:close)
 
-      # write response body to client
-      body.each do |part|
-        client_socket.write part
+        client_socket.flush
+        client_socket.close
       end
-      body.close if body.respond_to?(:close)
-
-      client_socket.flush
-      client_socket.close
     end
 
     def initialize_state
@@ -133,5 +144,12 @@ module Hobbit
     def dequeue_client
       @fd_recv.recv_io
     end
+
+    def spawn_worker
+      @worker_pids << fork do
+        handle_request
+      end
+    end
+
   end
 end
