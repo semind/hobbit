@@ -8,22 +8,19 @@ module Hobbit
 
     def initialize(app, options = {})
       @app = app # Rack
+      @config = Config.new(options)
 
       # Socket Pair for pass client socket to worker process
       @fd_send, @fd_recv = UNIXSocket.pair
 
       @worker_pids = []
 
-      worker_number = options[:worker_number] || 2
-
-      worker_number.times do
+      @config.worker_number.times do
         spawn_worker
       end
 
-      host = options[:host] || '127.0.0.1'
-      port = options[:port] || 1981
-      @server_socket = TCPServer.new(host, port)
-      puts_my_pid_with("Start Hobbit Server... #{host}:#{port}")
+      @server_socket = TCPServer.new(@config.host, @config.port)
+      puts_my_pid_with("Start Hobbit Server... #{@config.host}:#{@config.port}")
 
       trap(:SIGINT) do
         @worker_pids.each do |pid|
